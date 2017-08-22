@@ -1,0 +1,169 @@
+package newaws;
+
+import java.io.BufferedReader;
+import java.io.DataOutputStream;
+import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
+import java.net.URL;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TimeZone;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import javax.net.ssl.HttpsURLConnection;
+
+public class awsAuthTest1 {
+
+	public static String timestamp() {
+		DateFormat timestamp = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
+		timestamp.setTimeZone(TimeZone.getTimeZone("UTC"));//server timezone
+		return timestamp.format(new Date());
+	}
+
+	public static String getDate() {
+		DateFormat dateFormat = new SimpleDateFormat("yyyyMMdd");
+		dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));//server timezone
+		return dateFormat.format(new Date());
+	}
+
+	public static byte[] convertHash(String data) throws UnsupportedEncodingException {
+		MessageDigest messageDigest;
+		try {
+			messageDigest = MessageDigest.getInstance("SHA-256");
+			messageDigest.update(data.getBytes("UTF-8"));
+			byte[] digest = messageDigest.digest();
+			return digest;
+		} catch (NoSuchAlgorithmException e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
+
+	public static String hexHashConvert(byte[] data) {
+        StringBuilder sb = new StringBuilder(data.length * 2);
+        for (int i = 0; i < data.length; i++) {
+            String hex = Integer.toHexString(data[i]);
+            if (hex.length() == 1) {
+                // Append leading zero.
+                sb.append("0");
+            } else if (hex.length() == 8) {
+                // Remove ff prefix from negative numbers.
+                hex = hex.substring(6);
+            }
+            sb.append(hex);
+        }
+        return sb.toString().toLowerCase(Locale.getDefault());
+    }
+
+	public static byte[] HmacSHA256(byte[] key, String data) throws Exception {
+		String algorithm="HmacSHA256";
+		Mac mac = Mac.getInstance(algorithm);
+		mac.init(new SecretKeySpec(key, algorithm));
+		return mac.doFinal(data.getBytes("UTF-8"));
+	}
+
+	public static void sendPost(String url, Map<String, String> header ) throws Exception {		
+		URL obj = new URL(url);
+		HttpsURLConnection con = (HttpsURLConnection) obj.openConnection();
+
+		//add request header
+		con.setRequestMethod("POST");
+		con.setRequestProperty("Content-Type", header.get("Content-Type"));
+		con.setRequestProperty("X-Amz-Date", header.get("X-Amz-Date"));
+		con.setRequestProperty("X-Amz-Target", header.get("X-Amz-Target"));
+		con.setRequestProperty("Authorization", header.get("Authorization"));
+
+		// Send post request
+		con.setDoOutput(true);
+		con.connect();
+		DataOutputStream wr = new DataOutputStream(con.getOutputStream());
+		wr.flush();
+		wr.close();
+
+		int responseCode = con.getResponseCode();
+		System.out.println("\nSending 'POST' request to URL : " + url);
+		System.out.println("Response Code : " + responseCode);
+
+		BufferedReader in = new BufferedReader(
+		        new InputStreamReader(con.getErrorStream()));
+		String inputLine;
+		StringBuffer response = new StringBuffer();
+
+		while ((inputLine = in.readLine()) != null) {
+			response.append(inputLine);
+		}
+		in.close();
+		System.out.println(response.toString());
+	}
+
+	public static void main(String[] args) throws Exception {
+		String endpoint = "https://servicecatalog.us-east-2.amazonaws.com";
+	    String jsonTxt = 
+				"{\n"
+				+ "\"ProductId\": \"prod-123\",\n"
+				+ "\"ProvisionedProductName\": \"testNameq\",\n"
+				+ "\"ProvisioningArtifactId\": \"pa-123\",\n"
+				+ "\"ProvisioningParameters\": [{ \"Key\": \"keyName\",	\"Value\": \"123\"	}],\n"
+				+ "\"ProvisionToken\": \"testToken\",\n"
+				+ "\"Tags\": [{	\"Key\": \"Name\", \"Value\": \"EC2Name\"\n"
+				+ "}]}\n";
+
+		byte[] hashPayload = convertHash(jsonTxt);
+		String hexHashPayload = hexHashConvert(hashPayload).toLowerCase();
+		String method = "POST";
+		String canonical_uri = "/";
+		String canonical_querystring = "";
+		String canonical_headers;
+		String content_type = "application/x-www-form-urlencoded; charset=utf-8";
+		String host = "servicecatalog.us-east-2.amazonaws.com";
+		String amzDate = timestamp();
+		String amz_target = "AWS242ServiceCatalogService.ProvisionProduct";
+		canonical_headers = "content-type:" + content_type.toLowerCase().trim() + "\n" + "host:" + host.toLowerCase().trim() + "\n" + "x-amz-date:" + amzDate.toLowerCase().trim() + "\n" + "x-amz-target:" + amz_target.toLowerCase().trim() + "\n";
+		String signed_headers = "content-type;host;x-amz-date;x-amz-target";
+		String canonical_request = method + "\n" + canonical_uri + "\n" + canonical_querystring + "\n" + canonical_headers + "\n" + signed_headers + "\n" + hexHashPayload;
+		System.out.println("**************************Task 1:canonical_request**************************\n" + canonical_request);
+
+		//TASK 2
+		String algorithm = "AWS4-HMAC-SHA256";
+		String date_stamp = getDate();
+		String region = "us-east-2";
+		String service = "servicecatalog";
+		String credential_scope = date_stamp + "/" + region + "/" + service + "/" + "aws4_request";
+		String string_to_sign = algorithm + "\n" +  amzDate + "\n" +  credential_scope.toLowerCase() + "\n" +  hexHashConvert(convertHash(canonical_request));
+		System.out.println("**************************Task 2:string_to_sign**************************\n" + string_to_sign);
+
+		//TASK 3
+		String key = "SECRET-KEY";
+		byte[] kSecret = ("AWS4" + key).getBytes("UTF-8");
+		byte[] kDate = HmacSHA256(kSecret, date_stamp);
+		byte[] kRegion = HmacSHA256(kDate, region);
+		byte[] kService = HmacSHA256(kRegion, service);
+		byte[] kSigning = HmacSHA256(kService, "aws4_request");
+		byte[] signatureKey = HmacSHA256(kSigning, string_to_sign);
+		String signature = hexHashConvert(signatureKey);		
+
+		System.out.println("**************************Task 3:Signature**************************\n" + signature);
+		System.out.println("******************************************************************************");
+
+		//TASK 4
+		String access_key = "ACCESS-KEY";
+		String authorization_header = algorithm + " " + "Credential=" + access_key + "/" + credential_scope + ", " +  "SignedHeaders=" + signed_headers + ", " + "Signature=" + signature;
+
+		Map<String, String> header = new HashMap<String, String>(0);
+
+		header.put("Content-Type", content_type);
+		header.put("X-Amz-Date", amzDate);
+        header.put("X-Amz-Target", amz_target);
+        header.put("Authorization", authorization_header);
+        System.out.println(endpoint + "\n*********************************************************************\n" + header);
+        sendPost(endpoint, header);
+        
+        }
+}
